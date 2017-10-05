@@ -407,6 +407,11 @@ sub _upgrade {
 
 Applify - Write object oriented scripts with ease
 
+=for html <a href="https://travis-ci.org/jhthorsen/applify"><img src="https://travis-ci.org/jhthorsen/applify.svg?branch=master" alt="Build Status" /></a>
+
+=for html <a href="https://coveralls.io/github/jhthorsen/applify"><img src="https://coveralls.io/repos/github/jhthorsen/applify/badge.svg?branch=master" alt="Coverage Status" /></a>
+
+
 =head1 VERSION
 
 0.14
