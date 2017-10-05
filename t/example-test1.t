@@ -15,4 +15,11 @@ is($app->dry_run, undef, '--dry-run is not set');
 $app->dry_run(1);
 is($app->dry_run, 1, '--dry-run was set');
 
+$app->dry_run(0);
+is($app->dry_run, 0, '--no-dry-run was set');
+my ($stdout, $stderr, $retval) = run_method $app, 'run';
+like $stdout, qr/will/im, 'output includes will';
+is $stderr, '', 'empty stderr';
+ok $retval >= 0 and $retval <= 100, 'random number between 0 and 100';
+
 done_testing;
