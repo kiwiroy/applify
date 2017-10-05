@@ -45,6 +45,9 @@ Usage:
 
 HERE
 
+$script->documentation('Carp');
+like + (run_method($script, 'print_help'))[0], qr/use Carp;/, 'print_help()';
+
 done_testing;
 
 __END__
