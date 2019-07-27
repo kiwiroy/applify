@@ -185,6 +185,35 @@ HERE
   }), 'Applify::SUBCMD_PREFIX can be set';
 }
 
+{
+  # group_options
+  my $script = <<'EOF';
+use Applify;
+group_options {
+  option flag => one => zero => 1;
+} binary => 'exclusive';
+subcommand size => 'determine size' => sub {
+  group_options {
+    option flag => approx => approximate => 0;
+    option flag => precise => 'precision is not accuracy' => 0;
+    option flag => accurate => exact => 0;
+  } accuracy => 'exclusive';
+};
+app {};
+EOF
+  my $app = eval_script($script);
+  is $app->one, 1, 'default';
+  $app = eval_script($script, '-no-one');
+  is $app->one, 0, 'unset via cmdline';
+  ok !$app->can('approx'), 'can not';
+
+  $app = eval_script($script, qw{size -approx -precise -accurate -no-one});
+  is $app->one, 0, 'was unset';
+  is $app->approx, 1, 'first one won';
+  is $app->precise, 0, 'not set';
+  is $app->accurate, 0, 'not set';
+}
+
 sub deparse {
   my $dp = B::Deparse->new();
   return $dp->coderef2text($_[0] || sub {

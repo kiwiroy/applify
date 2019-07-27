@@ -27,6 +27,8 @@ sub app {
     push @options_spec, $self->_calculate_option_spec($option);
     $options{$options_key} = $option->{default}          if exists $option->{default};
     $options{$options_key} = [@{$options{$options_key}}] if ref($options{$options_key}) eq 'ARRAY';
+    $options{$options_key} = $self->_generate_group_handler($option, \%options)
+      if $option->{group};
   }
 
   unless ($parser->getoptions(\%options, @options_spec, $self->_default_options)) {
@@ -66,6 +68,21 @@ sub extends {
   return $self;
 }
 
+sub group_options {
+  my ($self, $code, $name, $mode) = (shift, shift, shift, shift || 'exclusive');
+  local $self->{group} = $name ||= _generate_group_name();
+  my $options = $self->{options};
+  my $before = @$options;
+  $code->();
+  die "no options added to group '$name'\n" unless @$options > $before;
+  for (my $i = $before; $i < @$options; $i++) {
+    push @{$self->{groups}{$name}{options}},
+      $self->_attr_to_option($options->[$i]->{name});
+  }
+  $self->{groups}{$name}{mode} = lc $mode;
+  return $self;
+}
+
 sub import {
   my ($class, %args) = @_;
   my @caller = caller;
@@ -75,15 +92,16 @@ sub import {
 
   strict->import;
   warnings->import;
-
-  $self->{skip_subs} = {app => 1, option => 1, version => 1, documentation => 1, extends => 1, subcommand => 1};
+  my @dsl =
+    qw(app extends group_options option version documentation subcommand);
+  $self->{skip_subs} = { map {$_ => 1} @dsl };
 
   no strict 'refs';
   for my $name (keys %$ns) {
     $self->{'skip_subs'}{$name} = 1;
   }
 
-  for my $k (qw(app extends option version documentation subcommand)) {
+  for my $k (@dsl) {
     my $name = $args{$k} // $k;
     next unless $name;
     $export{$k} = $name =~ /::/ ? $name : "$caller[0]\::$name";
@@ -91,6 +109,7 @@ sub import {
 
   no warnings 'redefine';    # need to allow redefine when loading a new app
   *{$export{app}}           = sub (&) { $self->app(@_) };
+  *{$export{group_options}} = sub (&@){ $self->group_options(@_) };
   *{$export{option}}        = sub     { $self->option(@_) };
   *{$export{version}}       = sub     { $self->version(@_) };
   *{$export{documentation}} = sub     { $self->documentation(@_) };
@@ -127,7 +146,10 @@ sub option {
     $args{alias} = [$args{alias}];
   }
 
-  push @{$self->{options}}, {default => $default, %args, type => $type, name => $name, documentation => $documentation};
+  push @{$self->{options}}, {default => $default,
+    %args, type => $type, name => $name, documentation => $documentation,
+    $self->{group} ? (group => $self->{group}) : (),
+  };
 
   return $self;
 }
@@ -335,6 +357,46 @@ sub _generate_application_class {
   return $application_class;
 }
 
+sub _generate_group_name {
+  my @set = ('0' ..'9', 'a' .. 'f');
+  return join '' => map $set[rand @set], 1 .. 8;
+}
+
+sub _generate_group_handler {
+  my ($self, $opt, $options) = (shift, shift, shift);
+  # return unless option is part of group
+  return sub {} unless (my $group = $opt->{group});
+  my $options_key = $self->_attr_to_option($opt->{name});
+  my $names       = $self->{groups}{$group}{options};
+  my $mode        = $self->{groups}{$group}{mode};
+  my $is_array    = !!(ref($options->{$options_key}) eq 'ARRAY');
+  # return if inconsistent $self->{groups} vs $opt->{group}
+  return sub {} unless grep { $_ eq $options_key } @$names;
+  my $options_def = $options->{$options_key};
+
+  return sub {
+    # provide the default for $self->_upgrade()
+    return $options_def unless @_;
+    my ($name, $value) = @_;
+    # fail...
+    die "incorrect group handler" if $options_key ne $name;
+    return unless grep { $_ eq $name } @$names;
+    # handle exclusive
+    if ($mode eq 'exclusive' &&
+      (my @set = grep { $_ ne $name && ref($options->{$_}) ne 'CODE' } @$names)){
+        # could die - causes getoptions to return undef and this _exit
+        warn "Cannot set $name - @set already defined\n";
+        return $options->{help} = !$ENV{TEST_ACTIVE};
+    }
+    # simple set when not n_of
+    return $options->{$name} = $value unless $is_array;
+    # create [] for first fence post
+    $options->{$name} = [] unless ref($options->{$name}) eq 'ARRAY';
+    # add to array
+    push @{$options->{$name}}, $value;
+  };
+}
+
 sub _load_class {
   my $class = shift or return undef;
   return $class if $class->can('new');
@@ -405,7 +467,8 @@ sub _subcommand_code {
 sub _upgrade {
   my ($self, $name, $input) = @_;
   return $input unless defined $input;
-
+  # grouped options will have a CODE ref, calling with no args returns default.
+  $input = $input->() if (ref($input) || '') eq 'CODE';
   my ($option) = grep { $_->{name} eq $name } @{$self->{options}};
   return $input unless my $class = _load_class($option->{isa});
   return ref $input eq 'ARRAY' ? [map { $class->new($_) } @$input] : $class->new($input);
@@ -583,6 +646,18 @@ future release.
 =back
 
 =back
+
+=head2 group_options
+
+  group_options {
+    option $type => $name1 => $documentation, $default;
+    option $type => $name2 => $documentation, $default;
+  } $group_name => 'exclusive';
+
+L<options|/"option"> may be grouped using L</"group_options"> in order that the
+usage on the commad line may be restricted as mutually exclusive. A warning will
+be issued, L<help|/"print_help"> printed and the application will exit on
+disallowed usage.
 
 =head2 documentation
 
