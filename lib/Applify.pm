@@ -385,7 +385,7 @@ sub _generate_group_handler {
     if ($mode eq 'exclusive' &&
       (my @set = grep { $_ ne $name && ref($options->{$_}) ne 'CODE' } @$names)){
         # could die - causes getoptions to return undef and this _exit
-        warn "Cannot set $name - @set already defined\n";
+        warn "[$group] Cannot also specify '--$name' when '--@set' already specified\n";
         return $options->{help} = !$ENV{HARNESS_ACTIVE};
     }
     # simple set when not n_of

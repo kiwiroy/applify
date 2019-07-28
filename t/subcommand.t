@@ -13,6 +13,9 @@ use B::Deparse;
 use Test::More;
 use lib '.';
 use t::Helper;
+no lib '.';
+
+my ($stdout, $stderr);
 
 my $code = <<'HERE';
 use Applify;
@@ -185,12 +188,15 @@ HERE
   }), 'Applify::SUBCMD_PREFIX can be set';
 }
 
+my $excl_regex =
+  qr{^\[\w+\] Cannot also specify '\-\-\w+' when '\-\-\w+' already specified$};
 {
   # group_options
   my $script = <<'EOF';
 use Applify;
 group_options {
   option flag => one => zero => 1;
+  option flag => two => four => 0;
 } binary => 'exclusive';
 subcommand size => 'determine size' => sub {
   group_options {
@@ -201,17 +207,72 @@ subcommand size => 'determine size' => sub {
 };
 app {};
 EOF
+  # no options - baseline
   my $app = eval_script($script);
   is $app->one, 1, 'default';
+  is $app->two, 0, 'default';
+  is $stderr =~ tr/\n/\n/, 0, 'STDERR has zero lines';
+  # negate to sanity check
   $app = eval_script($script, '-no-one');
   is $app->one, 0, 'unset via cmdline';
   ok !$app->can('approx'), 'can not';
-
+  is $stderr =~ tr/\n/\n/, 0, 'STDERR has zero lines';
+  # negate option plus normal within exclusive group
+  $app = eval_script($script, '-no-one', '-two');
+  is $app->one, 0, 'unset';
+  is $app->two, 0, 'cannot alter multiple exclusives';
+  is $stderr =~ tr/\n/\n/, 1, 'STDERR has correct line count';
+  like $_, $excl_regex, 'line matches expected message' for split $/, $stderr;
+  # subcommand size, check both groups interactions
   $app = eval_script($script, qw{size -approx -precise -accurate -no-one});
   is $app->one, 0, 'was unset';
   is $app->approx, 1, 'first one won';
   is $app->precise, 0, 'not set';
   is $app->accurate, 0, 'not set';
+  is $stderr =~ tr/\n/\n/, 2, 'STDERR has correct line count';
+  like $_, $excl_regex, 'line matches expected message' for split $/, $stderr;
+  # subcommand size, trigger exclusive guard in both groups
+  $app = eval_script($script, qw{size -accurate -precise -no-one -two});
+  is $app->one, 0, 'was unset';
+  is $app->two, 0, 'still exclusive';
+  is $app->approx, 0, 'remain unset';
+  is $app->precise, 0, 'not set';
+  is $app->accurate, 1, 'first one set';
+  is $stderr =~ tr/\n/\n/, 2, 'STDERR has correct line count';
+  like $_, $excl_regex, 'line matches expected message' for split $/, $stderr;
+}
+
+{
+  # group_options - groups of same name act as if one.
+  my $script = <<'EOF';
+use Applify;
+group_options {
+  option flag => one => zero => 1;
+  option flag => two => four => 0;
+} accuracy => 'exclusive';
+subcommand size => 'determine size' => sub {
+  group_options {
+    option flag => approx => approximate => 0;
+    option flag => precise => 'precision is not accuracy' => 0;
+    option flag => accurate => exact => 0;
+  } accuracy => 'exclusive';
+};
+app {};
+EOF
+  # subcommand size, check trigger across both specifications
+  my $app = eval_script($script, qw{size -two -accurate});
+  is $app->one, 1, 'default functions';
+  is $app->two, 1, 'set';
+  is $app->accurate, 0, 'acts as exclusive';
+  is $stderr =~ tr/\n/\n/, 1, 'STDERR has correct line count';
+  like $_, $excl_regex, 'line matches expected message' for split $/, $stderr;
+
+  $app = eval_script($script, qw{size -precise -accurate});
+  is $app->two, 0, 'set';
+  is $app->precise, 1, 'first set';
+  is $app->accurate, 0, 'acts as exclusive';
+  is $stderr =~ tr/\n/\n/, 1, 'STDERR has correct line count';
+  like $_, $excl_regex, 'line matches expected message' for split $/, $stderr;
 }
 
 sub deparse {
@@ -224,7 +285,11 @@ sub deparse {
 sub eval_script {
     my ($code, @args) = @_;
     local @ARGV = @args;
-
+    local *STDOUT;
+    local *STDERR;
+    $stdout = $stderr = '';
+    open STDOUT, '>', \$stdout;
+    open STDERR, '>', \$stderr;
     my $app = eval "$code" or die $@;
 
     return $app;
