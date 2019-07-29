@@ -75,11 +75,13 @@ sub group_options {
   my $before = @$options;
   $code->();
   die "no options added to group '$name'\n" unless @$options > $before;
+  $mode = $self->{groups}{$name}{mode} ||=
+    ($mode =~ m/^(?:excusive|required)$/i ? lc $mode : 'exclusive');
   for (my $i = $before; $i < @$options; $i++) {
+    delete $options->[$i]{required};
     push @{$self->{groups}{$name}{options}},
-      $self->_attr_to_option($options->[$i]->{name});
+      $self->_attr_to_option($options->[$i]{name});
   }
-  $self->{groups}{$name}{mode} = lc $mode;
   return $self;
 }
 
@@ -373,10 +375,19 @@ sub _generate_group_handler {
   # return if inconsistent $self->{groups} vs $opt->{group}
   return sub {} unless grep { $_ eq $options_key } @$names;
   my $options_def = $options->{$options_key};
-
+  
   return sub {
     # provide the default for $self->_upgrade()
-    return $options_def unless @_;
+    if (!@_) {
+      return $options->{$options_key} = $options_def if $mode eq 'exclusive';
+      if (@$names == grep { ref($options->{$_}) eq 'CODE' } @$names) {
+        my $missing = join '|' => map { qq{--$_} } @$names;
+        $self->print_help();
+        warn "[$group] Required attribute missing, specify one of [$missing]\n";
+      }
+      return $options->{$options_key} = $options_def;
+    }
+    die "Expected 2 arguments" if @_ != 2;
     my ($name, $value) = @_;
     # fail...
     die "incorrect group handler" if $options_key ne $name;
