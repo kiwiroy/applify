@@ -337,6 +337,11 @@ sub _generate_application_class {
   return $application_class;
 }
 
+sub _is_type_tiny_type {
+  my $type = shift or return undef;
+  return $type if $type->isa('Type::Tiny');
+}
+
 sub _load_class {
   my $class = shift or return undef;
   return $class if $class->can('new');
@@ -404,11 +409,29 @@ sub _subcommand_code {
   return $app->can("${SUBCMD_PREFIX}_${name}");
 }
 
+sub _try_type_coerce {
+  my ($type, $input) = (shift, shift);
+  return $type->($input)       if $type->check($input);
+  return $type->coerce($input) if $type->has_coercion;
+  return $type->($input);
+}
+
 sub _upgrade {
   my ($self, $name, $input) = @_;
   return $input unless defined $input;
 
   my ($option) = grep { $_->{name} eq $name } @{$self->{options}};
+
+  if (my $type = _is_type_tiny_type($option->{isa})) {
+    $input = ref $input eq 'ARRAY'
+      ? [ map { $@ || eval { _try_type_coerce($type, $_) } } @$input ]
+      : eval { _try_type_coerce($type, $input) };
+    if ($@) {
+      $self->print_help;
+      die join "\n", $@->message, @{$@->can('explain') ? $@->explain : []}, '';
+    }
+    return $input;
+  }
   return $input unless my $class = _load_class($option->{isa});
   return ref $input eq 'ARRAY' ? [map { $class->new($_) } @$input] : $class->new($input);
 }
